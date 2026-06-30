@@ -48,6 +48,20 @@ function sanitize(name) {
   return name.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 180);
 }
 
+// รูปแบบเวลาที่ยอมรับ: 90 / 1:30 / 1:02:03 / 1:30.5
+function validTime(t) {
+  return typeof t === 'string' && /^\d+(:\d{1,2}){0,2}(\.\d+)?$/.test(t);
+}
+
+// สร้าง arg ตัดเฉพาะช่วง ถ้ามี start/end ที่ถูกต้อง
+// --force-keyframes-at-cuts ทำให้ตัดตรงเวลาที่ระบุเป๊ะ (ไม่งั้นจะ snap ไปที่ keyframe คลาดเคลื่อนหลายวิ)
+function buildSection(opts) {
+  const s = (opts.start || '').trim(), e = (opts.end || '').trim();
+  if (!s && !e) return [];
+  if ((s && !validTime(s)) || (e && !validTime(e))) return [];
+  return ['--download-sections', `*${s || '0'}-${e || 'inf'}`, '--force-keyframes-at-cuts'];
+}
+
 function json(res, code, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -94,10 +108,11 @@ function startJob(opts) {
   fs.mkdirSync(dir, { recursive: true });
   const tmpl = path.join(dir, '%(title)s.%(ext)s');
 
+  const section = buildSection(opts);
   let args;
   if (opts.type === 'audio') {
     const fmt = AUDIO_FORMATS.includes(opts.format) ? opts.format : 'mp3';
-    args = ['-x', '--audio-format', fmt, '--audio-quality', '0',
+    args = ['-x', '--audio-format', fmt, '--audio-quality', '0', ...section,
       '--no-playlist', '--newline', '--no-warnings', '-o', tmpl, opts.url];
   } else {
     const cont = VIDEO_CONTAINERS.includes(opts.format) ? opts.format : 'mp4';
@@ -105,7 +120,7 @@ function startJob(opts) {
     const sel = h
       ? `bv*[height<=${h}]+ba/b[height<=${h}]`
       : 'bv*+ba/b';
-    args = ['-f', sel, '--merge-output-format', cont,
+    args = ['-f', sel, '--merge-output-format', cont, ...section,
       '--no-playlist', '--newline', '--no-warnings', '-o', tmpl, opts.url];
   }
 

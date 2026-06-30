@@ -80,6 +80,18 @@
     user-select:all;
   }
   .warn .small{font-size:11px;color:var(--muted)}
+  .cut{margin-bottom:18px}
+  .ck{display:flex;align-items:center;gap:9px;cursor:pointer;font-size:14px;color:var(--white);
+    text-transform:none;letter-spacing:0;margin:0;font-weight:600}
+  .ck input{width:17px;height:17px;accent-color:var(--red);cursor:pointer}
+  .times{display:flex;align-items:center;gap:10px;margin-top:12px}
+  .times input{
+    flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--white);
+    padding:11px 12px;border-radius:9px;font-size:14px;outline:none;text-align:center;
+  }
+  .times input:focus{border-color:var(--red)}
+  .times .arrow{color:var(--muted);font-size:16px}
+  .cuthint{font-size:11px;color:var(--muted);margin-top:8px}
 </style>
 </head>
 <body>
@@ -152,6 +164,16 @@
       </div>
     </div>
 
+    <div class="cut">
+      <label class="ck"><input type="checkbox" id="cut"> ✂ ตัดเฉพาะช่วงเวลา</label>
+      <div class="times hidden" id="times">
+        <input type="text" id="start" placeholder="เริ่ม เช่น 0:30" autocomplete="off">
+        <span class="arrow">→</span>
+        <input type="text" id="end" placeholder="จบ เช่น 2:45" autocomplete="off">
+      </div>
+      <div class="cuthint hidden" id="cuthint">รูปแบบ: นาที:วินาที (เช่น 1:30) หรือ ชม:นาที:วินาที • เว้นว่างช่องเริ่ม = ตั้งแต่ต้น, เว้นว่างช่องจบ = จนจบคลิป</div>
+    </div>
+
     <button class="btn" id="go">⬇ ดาวน์โหลด</button>
 
     <div class="progwrap hidden" id="progwrap">
@@ -165,7 +187,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let curType = 'audio', infoOk = false, debTimer = null, ready = false;
+let curType = 'audio', infoOk = false, debTimer = null, ready = false, clipDur = 0;
 
 // ถ้าหน้าถูกเสิร์ฟจาก localhost ใช้ same-origin; ถ้าอยู่บน GitHub Pages ให้เรียกโปรแกรมในเครื่องผู้ใช้
 const API = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) || location.protocol === 'file:'
@@ -242,6 +264,7 @@ async function loadInfo(url){
     if (!r.ok) throw new Error(j.error||'ดึงข้อมูลไม่สำเร็จ');
     $('title').textContent = j.title||'(ไม่มีชื่อ)';
     $('chan').textContent = j.uploader||'';
+    clipDur = j.duration || 0;
     $('dur').textContent = j.duration? '⏱ '+fmtDur(j.duration) : '';
     if (j.thumbnail) $('thumb').src = j.thumbnail;
     infoOk = true;
@@ -260,12 +283,40 @@ document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () =>
   $('videoOpts').classList.toggle('hidden', curType!=='video');
 }));
 
+// เปิด/ปิด ช่องเลือกช่วงเวลา
+$('cut').addEventListener('change', () => {
+  const on = $('cut').checked;
+  $('times').classList.toggle('hidden', !on);
+  $('cuthint').classList.toggle('hidden', !on);
+});
+
+// แปลงข้อความเวลา → วินาที (รองรับ 90 / 1:30 / 1:02:03) คืน NaN ถ้าผิด
+function toSec(str){
+  str = (str||'').trim();
+  if (!str) return null; // ว่าง = ไม่กำหนด
+  if (!/^\d+(:\d{1,2}){0,2}(\.\d+)?$/.test(str)) return NaN;
+  const parts = str.split(':').map(Number);
+  return parts.reduce((acc,n)=>acc*60+n, 0);
+}
+
 $('go').addEventListener('click', async () => {
   if (!infoOk || !ready) return;
   const url = $('url').value.trim();
   const body = curType==='audio'
     ? { url, type:'audio', format:$('audioFmt').value }
     : { url, type:'video', format:$('videoFmt').value, quality:$('quality').value };
+
+  // ช่วงเวลา (ถ้าเปิด)
+  if ($('cut').checked){
+    const sRaw = $('start').value.trim(), eRaw = $('end').value.trim();
+    const s = toSec(sRaw), e = toSec(eRaw);
+    if (Number.isNaN(s) || Number.isNaN(e)) return showDlErr('รูปแบบเวลาไม่ถูกต้อง (ใช้ เช่น 1:30)');
+    if (s===null && e===null) return showDlErr('ใส่เวลาเริ่มหรือจบอย่างน้อยหนึ่งช่อง');
+    if (s!==null && e!==null && s>=e) return showDlErr('เวลาเริ่มต้องน้อยกว่าเวลาจบ');
+    if (clipDur && e!==null && e>clipDur+1) return showDlErr('เวลาจบเกินความยาวคลิป ('+fmtDur(clipDur)+')');
+    if (sRaw) body.start = sRaw;
+    if (eRaw) body.end = eRaw;
+  }
 
   $('go').disabled = true; $('go').textContent = 'กำลังเตรียม...';
   $('dlErr').style.display='none';
@@ -305,8 +356,11 @@ function track(jobId){
   poll();
 }
 
-function fail(msg){
+function showDlErr(msg){
   $('dlErr').style.display='block'; $('dlErr').textContent = '⚠ '+msg;
+}
+function fail(msg){
+  showDlErr(msg);
   reset();
 }
 function reset(){
