@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YT Downloader</title>
+<style>
+  :root{
+    --bg:#0a0a0a; --panel:#141414; --panel2:#1c1c1c; --line:#2a2a2a;
+    --red:#e60028; --red-dim:#b00020; --white:#f2f2f2; --muted:#8a8a8a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:'Segoe UI','Leelawadee UI',sans-serif;background:var(--bg);
+    color:var(--white);min-height:100vh;display:flex;flex-direction:column;
+    align-items:center;padding:32px 16px;
+  }
+  .top{width:100%;max-width:640px;display:flex;align-items:center;gap:12px;margin-bottom:24px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--red);box-shadow:0 0 10px var(--red)}
+  h1{font-size:20px;font-weight:700;letter-spacing:.5px}
+  h1 span{color:var(--red)}
+  .sub{color:var(--muted);font-size:12px;margin-left:auto}
+  .card{
+    width:100%;max-width:640px;background:var(--panel);border:1px solid var(--line);
+    border-radius:14px;padding:22px;margin-bottom:18px;
+  }
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
+  .urlrow{display:flex;gap:10px}
+  input[type=text]{
+    flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--white);
+    padding:13px 14px;border-radius:9px;font-size:14px;outline:none;
+  }
+  input[type=text]:focus{border-color:var(--red)}
+  .info{display:none;gap:14px;margin-top:18px;align-items:center}
+  .info.show{display:flex}
+  .info img{width:120px;height:68px;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:#000}
+  .info .meta{min-width:0}
+  .info .t{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:380px}
+  .info .c{font-size:12px;color:var(--muted);margin-top:4px}
+  .badge{display:inline-block;font-size:11px;color:var(--red);border:1px solid var(--red-dim);padding:1px 7px;border-radius:20px;margin-top:6px}
+  .tabs{display:flex;gap:8px;margin-bottom:18px}
+  .tab{
+    flex:1;background:var(--panel2);border:1px solid var(--line);color:var(--muted);
+    padding:12px;border-radius:9px;cursor:pointer;font-size:14px;font-weight:600;text-align:center;
+    transition:.15s;
+  }
+  .tab.active{background:var(--red);border-color:var(--red);color:#fff}
+  .opts{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px}
+  .opts.single{grid-template-columns:1fr}
+  select{
+    width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--white);
+    padding:12px;border-radius:9px;font-size:14px;outline:none;cursor:pointer;
+  }
+  select:focus{border-color:var(--red)}
+  .btn{
+    width:100%;background:var(--red);color:#fff;border:none;padding:15px;border-radius:9px;
+    font-size:15px;font-weight:700;cursor:pointer;letter-spacing:.5px;transition:.15s;
+  }
+  .btn:hover{background:var(--red-dim)}
+  .btn:disabled{background:#3a3a3a;color:#777;cursor:not-allowed}
+  .hidden{display:none!important}
+  .progwrap{margin-top:16px}
+  .bar{height:8px;background:var(--panel2);border-radius:20px;overflow:hidden;border:1px solid var(--line)}
+  .fill{height:100%;width:0;background:var(--red);transition:width .3s}
+  .pstat{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-top:8px}
+  .err{color:var(--red);font-size:13px;margin-top:12px;display:none}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--red);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-left:8px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .foot{color:var(--muted);font-size:11px;margin-top:8px;text-align:center;max-width:640px}
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="dot"></div>
+    <h1>YT <span>Downloader</span></h1>
+    <div class="sub">powered by yt-dlp</div>
+  </div>
+
+  <div class="card">
+    <label>วาง URL ลิงก์ YouTube</label>
+    <div class="urlrow">
+      <input id="url" type="text" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off" spellcheck="false">
+    </div>
+    <div class="info" id="info">
+      <img id="thumb" alt="">
+      <div class="meta">
+        <div class="t" id="title">—</div>
+        <div class="c" id="chan"></div>
+        <span class="badge" id="dur"></span>
+      </div>
+    </div>
+    <div class="err" id="infoErr"></div>
+  </div>
+
+  <div class="card hidden" id="dlcard">
+    <div class="tabs">
+      <div class="tab active" data-type="audio">🎵 เสียง</div>
+      <div class="tab" data-type="video">🎬 วิดีโอ</div>
+    </div>
+
+    <div class="opts single" id="audioOpts">
+      <div>
+        <label>นามสกุลไฟล์เสียง</label>
+        <select id="audioFmt">
+          <option value="mp3">MP3 — ใช้ได้ทุกที่</option>
+          <option value="m4a">M4A — คุณภาพดี ไฟล์เล็ก</option>
+          <option value="opus">OPUS — คุณภาพสูงสุด</option>
+          <option value="wav">WAV — ไม่บีบอัด</option>
+          <option value="flac">FLAC — lossless</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="opts hidden" id="videoOpts">
+      <div>
+        <label>ความละเอียด</label>
+        <select id="quality">
+          <option value="best">ดีที่สุด</option>
+          <option value="2160">4K (2160p)</option>
+          <option value="1440">2K (1440p)</option>
+          <option value="1080" selected>1080p</option>
+          <option value="720">720p</option>
+          <option value="480">480p</option>
+          <option value="360">360p</option>
+        </select>
+      </div>
+      <div>
+        <label>นามสกุลไฟล์</label>
+        <select id="videoFmt">
+          <option value="mp4">MP4 — ใช้ได้ทุกที่</option>
+          <option value="mkv">MKV</option>
+          <option value="webm">WEBM</option>
+        </select>
+      </div>
+    </div>
+
+    <button class="btn" id="go">⬇ ดาวน์โหลด</button>
+
+    <div class="progwrap hidden" id="progwrap">
+      <div class="bar"><div class="fill" id="fill"></div></div>
+      <div class="pstat"><span id="phase">เริ่มต้น...</span><span id="pct">0%</span></div>
+    </div>
+    <div class="err" id="dlErr"></div>
+  </div>
+
+  <div class="foot">ไฟล์จะถูกบันทึกผ่านหน้าต่างดาวน์โหลดของเบราว์เซอร์ตามปกติ • ทำงานบนเครื่องคุณเอง</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let curType = 'audio', infoOk = false, debTimer = null;
+
+function fmtDur(s){ s=Math.round(s); const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;
+  return (h?h+':':'')+String(m).padStart(h?2:1,'0')+':'+String(x).padStart(2,'0'); }
+
+$('url').addEventListener('input', () => {
+  clearTimeout(debTimer);
+  const v = $('url').value.trim();
+  infoOk = false; $('dlcard').classList.add('hidden'); $('info').classList.remove('show');
+  $('infoErr').style.display='none';
+  if (!/^https?:\/\//i.test(v)) return;
+  debTimer = setTimeout(() => loadInfo(v), 600);
+});
+
+async function loadInfo(url){
+  $('infoErr').style.display='none';
+  $('infoErr').textContent='';
+  $('title').innerHTML = 'กำลังดึงข้อมูล<span class="spinner"></span>';
+  $('info').classList.add('show'); $('thumb').src=''; $('chan').textContent=''; $('dur').textContent='';
+  try{
+    const r = await fetch('/api/info?url='+encodeURIComponent(url));
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error||'ดึงข้อมูลไม่สำเร็จ');
+    $('title').textContent = j.title||'(ไม่มีชื่อ)';
+    $('chan').textContent = j.uploader||'';
+    $('dur').textContent = j.duration? '⏱ '+fmtDur(j.duration) : '';
+    if (j.thumbnail) $('thumb').src = j.thumbnail;
+    infoOk = true;
+    $('dlcard').classList.remove('hidden');
+  }catch(e){
+    $('info').classList.remove('show');
+    $('infoErr').style.display='block';
+    $('infoErr').textContent = '⚠ '+e.message;
+  }
+}
+
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+  t.classList.add('active'); curType = t.dataset.type;
+  $('audioOpts').classList.toggle('hidden', curType!=='audio');
+  $('videoOpts').classList.toggle('hidden', curType!=='video');
+}));
+
+$('go').addEventListener('click', async () => {
+  if (!infoOk) return;
+  const url = $('url').value.trim();
+  const body = curType==='audio'
+    ? { url, type:'audio', format:$('audioFmt').value }
+    : { url, type:'video', format:$('videoFmt').value, quality:$('quality').value };
+
+  $('go').disabled = true; $('go').textContent = 'กำลังเตรียม...';
+  $('dlErr').style.display='none';
+  $('progwrap').classList.remove('hidden');
+  $('fill').style.width='0%'; $('pct').textContent='0%'; $('phase').textContent='เริ่มต้น...';
+
+  try{
+    const r = await fetch('/api/start', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error||'เริ่มงานไม่สำเร็จ');
+    track(j.jobId);
+  }catch(e){ fail(e.message); }
+});
+
+function track(jobId){
+  const es = new EventSource('/api/progress/'+jobId);
+  es.onmessage = (ev) => {
+    const d = JSON.parse(ev.data);
+    $('fill').style.width = (d.percent||0)+'%';
+    $('pct').textContent = Math.round(d.percent||0)+'%';
+    $('phase').textContent = d.phase||'';
+    if (d.status==='done'){
+      es.close();
+      $('fill').style.width='100%'; $('pct').textContent='100%'; $('phase').textContent='เสร็จแล้ว ✓';
+      window.location = '/api/file/'+jobId;
+      setTimeout(reset, 1200);
+    } else if (d.status==='error'){
+      es.close(); fail(d.error||'เกิดข้อผิดพลาด');
+    }
+  };
+  es.onerror = () => { es.close(); };
+}
+
+function fail(msg){
+  $('dlErr').style.display='block'; $('dlErr').textContent = '⚠ '+msg;
+  reset();
+}
+function reset(){
+  $('go').disabled=false; $('go').textContent='⬇ ดาวน์โหลด';
+}
+</script>
+</body>
+</html>

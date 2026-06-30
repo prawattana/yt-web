@@ -1,0 +1,187 @@
+// yt-web — เว็บหน้าเดียวสำหรับโหลดเสียง/วิดีโอ YouTube ผ่าน yt-dlp
+// zero-dependency Node http server
+const http = require('http');
+const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+const PORT = 6200;
+const ROOT = __dirname;
+const JOBS_DIR = path.join(os.tmpdir(), 'yt-web-jobs');
+fs.mkdirSync(JOBS_DIR, { recursive: true });
+
+const jobs = {}; // id -> { proc, percent, phase, status, file, error }
+
+// อนุญาตเฉพาะ URL ที่หน้าตาเป็นลิงก์เว็บจริง ป้องกัน argument injection
+function validUrl(u) {
+  if (typeof u !== 'string' || u.length > 2048) return false;
+  try {
+    const x = new URL(u);
+    return x.protocol === 'http:' || x.protocol === 'https:';
+  } catch { return false; }
+}
+
+const AUDIO_FORMATS = ['mp3', 'm4a', 'opus', 'wav', 'flac'];
+const VIDEO_CONTAINERS = ['mp4', 'webm', 'mkv'];
+const QUALITIES = { best: 0, '2160': 2160, '1440': 1440, '1080': 1080, '720': 720, '480': 480, '360': 360 };
+
+function sanitize(name) {
+  return name.replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+function json(res, code, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(body);
+}
+
+function readBody(req) {
+  return new Promise((resolve) => {
+    let data = '';
+    req.on('data', (c) => { data += c; if (data.length > 1e6) req.destroy(); });
+    req.on('end', () => { try { resolve(JSON.parse(data || '{}')); } catch { resolve({}); } });
+  });
+}
+
+// ---- ดึงข้อมูลคลิป ----
+function fetchInfo(url) {
+  return new Promise((resolve, reject) => {
+    const args = ['-J', '--no-playlist', '--no-warnings', url];
+    const p = spawn('yt-dlp', args, { windowsHide: true });
+    let out = '', err = '';
+    p.stdout.on('data', (d) => out += d);
+    p.stderr.on('data', (d) => err += d);
+    p.on('error', (e) => reject(new Error('เรียก yt-dlp ไม่ได้: ' + e.message)));
+    p.on('close', (code) => {
+      if (code !== 0) return reject(new Error(err.trim().split('\n').pop() || 'ดึงข้อมูลไม่สำเร็จ'));
+      try {
+        const j = JSON.parse(out);
+        resolve({
+          title: j.title,
+          uploader: j.uploader || j.channel || '',
+          duration: j.duration || 0,
+          thumbnail: j.thumbnail || '',
+          extractor: j.extractor_key || '',
+        });
+      } catch (e) { reject(new Error('อ่านข้อมูลไม่ได้')); }
+    });
+  });
+}
+
+// ---- เริ่มงานโหลด ----
+function startJob(opts) {
+  const id = Date.now().toString(36) + Math.floor(performance.now() % 1e6).toString(36);
+  const dir = path.join(JOBS_DIR, id);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmpl = path.join(dir, '%(title)s.%(ext)s');
+
+  let args;
+  if (opts.type === 'audio') {
+    const fmt = AUDIO_FORMATS.includes(opts.format) ? opts.format : 'mp3';
+    args = ['-x', '--audio-format', fmt, '--audio-quality', '0',
+      '--no-playlist', '--newline', '--no-warnings', '-o', tmpl, opts.url];
+  } else {
+    const cont = VIDEO_CONTAINERS.includes(opts.format) ? opts.format : 'mp4';
+    const h = QUALITIES[opts.quality] || 0;
+    const sel = h
+      ? `bv*[height<=${h}]+ba/b[height<=${h}]`
+      : 'bv*+ba/b';
+    args = ['-f', sel, '--merge-output-format', cont,
+      '--no-playlist', '--newline', '--no-warnings', '-o', tmpl, opts.url];
+  }
+
+  const job = { percent: 0, phase: 'เริ่มต้น...', status: 'running', file: null, error: null };
+  jobs[id] = job;
+
+  const p = spawn('yt-dlp', args, { windowsHide: true });
+  job.proc = p;
+  const onLine = (buf) => {
+    const s = buf.toString();
+    const m = s.match(/\[download\]\s+([\d.]+)%/);
+    if (m) { job.percent = parseFloat(m[1]); job.phase = 'กำลังดาวน์โหลด'; }
+    if (/\[ExtractAudio\]/.test(s)) job.phase = 'แปลงเสียง';
+    if (/\[Merger\]/.test(s)) job.phase = 'รวมไฟล์';
+    if (/\[VideoConvertor\]|\[Recode\]/.test(s)) job.phase = 'แปลงไฟล์';
+  };
+  p.stdout.on('data', onLine);
+  p.stderr.on('data', (d) => { onLine(d); job._err = (job._err || '') + d; });
+  p.on('error', (e) => { job.status = 'error'; job.error = 'เรียก yt-dlp ไม่ได้: ' + e.message; });
+  p.on('close', (code) => {
+    if (job.status === 'error') return;
+    if (code !== 0) {
+      job.status = 'error';
+      job.error = ((job._err || '').trim().split('\n').pop()) || ('yt-dlp ออกด้วยรหัส ' + code);
+      return;
+    }
+    const files = fs.readdirSync(dir).map((f) => ({ f, s: fs.statSync(path.join(dir, f)).size }));
+    if (!files.length) { job.status = 'error'; job.error = 'ไม่พบไฟล์ที่โหลด'; return; }
+    files.sort((a, b) => b.s - a.s);
+    job.file = path.join(dir, files[0].f);
+    job.percent = 100;
+    job.phase = 'เสร็จแล้ว';
+    job.status = 'done';
+  });
+
+  return id;
+}
+
+// ---- HTTP ----
+const server = http.createServer(async (req, res) => {
+  const u = new URL(req.url, 'http://localhost');
+  const p = u.pathname;
+
+  if (p === '/' || p === '/index.html') {
+    return fs.createReadStream(path.join(ROOT, 'public', 'index.html'))
+      .on('error', () => { res.writeHead(404); res.end(); })
+      .pipe(res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }) || res);
+  }
+
+  if (p === '/api/info') {
+    const url = u.searchParams.get('url');
+    if (!validUrl(url)) return json(res, 400, { error: 'URL ไม่ถูกต้อง' });
+    try { return json(res, 200, await fetchInfo(url)); }
+    catch (e) { return json(res, 500, { error: e.message }); }
+  }
+
+  if (p === '/api/start' && req.method === 'POST') {
+    const b = await readBody(req);
+    if (!validUrl(b.url)) return json(res, 400, { error: 'URL ไม่ถูกต้อง' });
+    if (b.type !== 'audio' && b.type !== 'video') return json(res, 400, { error: 'ชนิดไฟล์ไม่ถูกต้อง' });
+    const id = startJob(b);
+    return json(res, 200, { jobId: id });
+  }
+
+  if (p.startsWith('/api/progress/')) {
+    const id = p.split('/').pop();
+    const job = jobs[id];
+    if (!job) return json(res, 404, { error: 'ไม่พบงาน' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    const tick = setInterval(() => {
+      res.write(`data: ${JSON.stringify({ percent: job.percent, phase: job.phase, status: job.status, error: job.error })}\n\n`);
+      if (job.status === 'done' || job.status === 'error') { clearInterval(tick); res.end(); }
+    }, 400);
+    req.on('close', () => clearInterval(tick));
+    return;
+  }
+
+  if (p.startsWith('/api/file/')) {
+    const id = p.split('/').pop();
+    const job = jobs[id];
+    if (!job || job.status !== 'done' || !job.file) return json(res, 404, { error: 'ไฟล์ยังไม่พร้อม' });
+    const fname = sanitize(path.basename(job.file));
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Length': fs.statSync(job.file).size,
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`,
+    });
+    fs.createReadStream(job.file).pipe(res);
+    return;
+  }
+
+  res.writeHead(404); res.end('Not found');
+});
+
+server.listen(PORT, () => {
+  console.log(`yt-web ทำงานที่ http://localhost:${PORT}`);
+});
