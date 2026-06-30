@@ -171,7 +171,7 @@
         <span class="arrow">→</span>
         <input type="text" id="end" placeholder="จบ เช่น 2:45" autocomplete="off">
       </div>
-      <div class="cuthint hidden" id="cuthint">รูปแบบ: นาที:วินาที (เช่น 1:30) หรือ ชม:นาที:วินาที • เว้นว่างช่องเริ่ม = ตั้งแต่ต้น, เว้นว่างช่องจบ = จนจบคลิป</div>
+      <div class="cuthint hidden" id="cuthint">รูปแบบ: นาที:วินาที (เช่น 1:30) หรือ ชม:นาที:วินาที • เว้นว่างช่องเริ่ม = ตั้งแต่ต้น, เว้นว่างช่องจบ = จนจบคลิป<br>เสียงตัดตรงเป๊ะ • วิดีโอตัดที่ keyframe ใกล้สุด (เร็วทันที อาจคลาดเล็กน้อย ~1 วิ)</div>
     </div>
 
     <button class="btn" id="go">⬇ ดาวน์โหลด</button>
@@ -343,6 +343,7 @@ function track(jobId){
     $('fill').style.width = (d.percent||0)+'%';
     $('pct').textContent = Math.round(d.percent||0)+'%';
     $('phase').textContent = d.phase||'';
+    if (d.status==='running') $('go').textContent = (d.phase||'กำลังทำงาน')+'...';
     if (d.status==='done'){
       $('fill').style.width='100%'; $('pct').textContent='100%'; $('phase').textContent='เสร็จแล้ว ✓';
       window.location = API+'/api/file/'+jobId;

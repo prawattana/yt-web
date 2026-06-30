@@ -54,12 +54,11 @@ function validTime(t) {
 }
 
 // สร้าง arg ตัดเฉพาะช่วง ถ้ามี start/end ที่ถูกต้อง
-// --force-keyframes-at-cuts ทำให้ตัดตรงเวลาที่ระบุเป๊ะ (ไม่งั้นจะ snap ไปที่ keyframe คลาดเคลื่อนหลายวิ)
 function buildSection(opts) {
   const s = (opts.start || '').trim(), e = (opts.end || '').trim();
   if (!s && !e) return [];
   if ((s && !validTime(s)) || (e && !validTime(e))) return [];
-  return ['--download-sections', `*${s || '0'}-${e || 'inf'}`, '--force-keyframes-at-cuts'];
+  return ['--download-sections', `*${s || '0'}-${e || 'inf'}`];
 }
 
 function json(res, code, obj) {
@@ -112,7 +111,9 @@ function startJob(opts) {
   let args;
   if (opts.type === 'audio') {
     const fmt = AUDIO_FORMATS.includes(opts.format) ? opts.format : 'mp3';
-    args = ['-x', '--audio-format', fmt, '--audio-quality', '0', ...section,
+    // เสียง: re-encode อยู่แล้ว → ใส่ --force-keyframes-at-cuts ให้ตัดตรงเวลาเป๊ะ (เร็ว)
+    const kf = section.length ? ['--force-keyframes-at-cuts'] : [];
+    args = ['-x', '--audio-format', fmt, '--audio-quality', '0', ...section, ...kf,
       '--no-playlist', '--newline', '--no-warnings', '-o', tmpl, opts.url];
   } else {
     const cont = VIDEO_CONTAINERS.includes(opts.format) ? opts.format : 'mp4';
@@ -120,7 +121,10 @@ function startJob(opts) {
     const sel = h
       ? `bv*[height<=${h}]+ba/b[height<=${h}]`
       : 'bv*+ba/b';
-    args = ['-f', sel, '--merge-output-format', cont, ...section,
+    // วิดีโอ + ตัดช่วง: ห้าม re-encode (1080p60 ช้าเป็นนาที) → ตัดที่ keyframe แบบ copy (เร็ว)
+    // เลือก H.264 ก่อน เพื่อ copy เข้า mp4 ได้สะอาดและเล่นได้ทุกที่ (ถ้าไม่มีค่อย fallback AV1/VP9)
+    const vsort = section.length ? ['-S', 'vcodec:h264'] : [];
+    args = ['-f', sel, ...vsort, '--merge-output-format', cont, ...section,
       '--no-playlist', '--newline', '--no-warnings', '-o', tmpl, opts.url];
   }
 
