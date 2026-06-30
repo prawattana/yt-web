@@ -13,6 +13,24 @@ fs.mkdirSync(JOBS_DIR, { recursive: true });
 
 const jobs = {}; // id -> { proc, percent, phase, status, file, error }
 
+// ---- เช็คว่ามี yt-dlp / ffmpeg ในเครื่องไหม ----
+function checkBin(cmd, arg) {
+  return new Promise((resolve) => {
+    const p = spawn(cmd, [arg], { windowsHide: true });
+    let out = '';
+    p.stdout.on('data', (d) => out += d);
+    p.on('error', () => resolve({ ok: false, version: '' }));
+    p.on('close', (code) => resolve({ ok: code === 0, version: out.trim().split('\n')[0] }));
+  });
+}
+async function checkDeps() {
+  const [ytdlp, ffmpeg] = await Promise.all([
+    checkBin('yt-dlp', '--version'),
+    checkBin('ffmpeg', '-version'),
+  ]);
+  return { ytdlp, ffmpeg };
+}
+
 // อนุญาตเฉพาะ URL ที่หน้าตาเป็นลิงก์เว็บจริง ป้องกัน argument injection
 function validUrl(u) {
   if (typeof u !== 'string' || u.length > 2048) return false;
@@ -131,10 +149,23 @@ const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://localhost');
   const p = u.pathname;
 
+  // อนุญาตให้หน้าเว็บที่โฮสต์ที่อื่น (เช่น GitHub Pages) เรียกโปรแกรมในเครื่องนี้ได้
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.writeHead(204); res.end(); return;
+  }
+
   if (p === '/' || p === '/index.html') {
     return fs.createReadStream(path.join(ROOT, 'public', 'index.html'))
       .on('error', () => { res.writeHead(404); res.end(); })
       .pipe(res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }) || res);
+  }
+
+  if (p === '/api/health') {
+    return json(res, 200, await checkDeps());
   }
 
   if (p === '/api/info') {
@@ -150,6 +181,13 @@ const server = http.createServer(async (req, res) => {
     if (b.type !== 'audio' && b.type !== 'video') return json(res, 400, { error: 'ชนิดไฟล์ไม่ถูกต้อง' });
     const id = startJob(b);
     return json(res, 200, { jobId: id });
+  }
+
+  if (p.startsWith('/api/status/')) {
+    const id = p.split('/').pop();
+    const job = jobs[id];
+    if (!job) return json(res, 404, { error: 'ไม่พบงาน' });
+    return json(res, 200, { percent: job.percent, phase: job.phase, status: job.status, error: job.error });
   }
 
   if (p.startsWith('/api/progress/')) {
